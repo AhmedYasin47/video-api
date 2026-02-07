@@ -33,25 +33,19 @@ async def video_indir(url: str, background_tasks: BackgroundTasks):
         
         print(f"İndirme İsteği: {url}")
 
-        # yt-dlp Ayarları (Android Dostu Sürüm)
+       # yt-dlp Ayarları (Android ve iPhone Dostu Sürüm)
         ydl_opts = {
-            # 1. En iyi kaliteyi seç ama MP4 öncelikli olsun
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            # BURASI ÇOK ÖNEMLİ:
+            # vcodec^=avc -> Bize H.264 (standart) video ver demek.
+            # acodec^=mp4a -> Bize AAC (standart) ses ver demek.
+            'format': 'bestvideo[vcodec^=avc]+bestaudio[acodec^=mp4a]/best[ext=mp4]/best',
             
-            # 2. Çıktı şablonu
             'outtmpl': f'{dosya_yolu}.%(ext)s',
-            
-            # 3. İndirme bittikten sonra videoyu MUTLAKA mp4 yap (Post-processor)
-            'postprocessors': [{
-                'key': 'FFmpegVideoConvertor',
-                'preferedformat': 'mp4',
-            }],
-            
-            # 4. Terminal kirliliği olmasın
+            'merge_output_format': 'mp4',
             'quiet': True,
             'no_warnings': True,
             
-            # 5. Tarayıcı gibi davran (Bot korumasını geçmek için)
+            # Instagram ve TikTok için gerekli başlıklar
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
