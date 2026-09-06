@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: social-saver-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /saglik
+    envVars:
+      - key: MAKS_BOYUT_MB
+        value: "300"
+      - key: DAKIKA_LIMITI
+        value: "12"
+      - key: ES_ZAMANLI
+        value: "3"

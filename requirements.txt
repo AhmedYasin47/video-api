@@ -1,0 +1,6 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+httpx>=0.27.0
+# TikTok extractor'i TLS impersonation istiyor -> curl_cffi sart
+# yt-dlp'yi PINLEME! Platformlar sik degisiyor, her deploy'da en guncelini cek.
+yt-dlp[default,curl-cffi]
