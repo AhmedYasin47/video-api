@@ -81,13 +81,15 @@ COOKIE_DOSYASI = os.getenv("COOKIE_DOSYASI", "").strip()
 DEBUG_ACIK = os.getenv("DEBUG_ACIK", "1").strip() == "1"
 YT_PLAYER_CLIENT = os.getenv("YT_PLAYER_CLIENT", "").strip()
 IMPERSONATE = os.getenv("IMPERSONATE", "").strip()  # ornek: chrome / safari
-KALITE_ONCELIK = os.getenv("KALITE_ONCELIK", "0").strip() == "1"
+# Varsayilan: en yuksek cozunurluk. Videolar telefonda acilmazsa
+# SADECE_H264=1 yapip uyumlu moda dus.
+SADECE_H264 = os.getenv("SADECE_H264", "0").strip() == "1"
 
 MAKS_BOYUT = int(os.getenv("MAKS_BOYUT_MB", "300")) * 1024 * 1024
 DAKIKA_LIMITI = int(os.getenv("DAKIKA_LIMITI", "12"))
 ES_ZAMANLI_LIMIT = int(os.getenv("ES_ZAMANLI", "3"))
 
-FORMAT_SECIMI = FORMAT_KALITELI if KALITE_ONCELIK else FORMAT_UYUMLU
+FORMAT_SECIMI = FORMAT_UYUMLU if SADECE_H264 else FORMAT_KALITELI
 
 IZINLI_HOSTLAR = set(TEMEL_HOSTLAR)
 if YOUTUBE_ACIK:
@@ -320,7 +322,7 @@ async def saglik():
         "surum": SURUM,
         "yt_dlp": ytdlp_surum,
         "impersonate_hedefleri": _impersonate_sayisi(),
-        "kalite_onceligi": KALITE_ONCELIK,
+        "sadece_h264": SADECE_H264,
         "youtube_acik": YOUTUBE_ACIK,
         "proxy_var": bool(PROXY),
         "cookie_var": bool(COOKIE_DOSYASI and os.path.exists(COOKIE_DOSYASI)),
