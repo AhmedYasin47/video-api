@@ -1,3 +1,0 @@
-fastapi
-uvicorn
-yt-dlp>=2024.08.06
