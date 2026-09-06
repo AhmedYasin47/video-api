@@ -21,6 +21,7 @@ import re
 import shutil
 import tempfile
 import time
+import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -192,9 +193,15 @@ def _ydl_ayarlari(ekstra: dict | None = None) -> dict:
     return ayarlar
 
 
-def _bilgi_cek(url: str) -> dict:
+def _bilgi_cek(url: str) -> tuple[dict, object]:
+    """Metadata + cookiejar doner.
+
+    TikTok gibi siteler JS challenge cozup cookie aliyor; CDN o cookie olmadan
+    403 doner. O yuzden jar'i disari tasiyip stream isteginde kullaniyoruz.
+    """
     with YoutubeDL(_ydl_ayarlari({"skip_download": True})) as ydl:
         bilgi = ydl.extract_info(url, download=False)
+        jar = ydl.cookiejar
 
     if bilgi is None:
         raise ExtractorError("Bos yanit")
@@ -205,7 +212,17 @@ def _bilgi_cek(url: str) -> dict:
             raise ExtractorError("Bu linkte indirilebilir video yok")
         bilgi = girisler[0]
 
-    return bilgi
+    return bilgi, jar
+
+
+def _cookie_basligi(jar, hedef_url: str) -> str:
+    """Cookiejar'dan hedef adrese uyan cookie'leri Cookie: basligina cevirir."""
+    try:
+        istek = urllib.request.Request(hedef_url)
+        jar.add_cookie_header(istek)
+        return istek.get_header("Cookie", "") or ""
+    except Exception:
+        return ""
 
 
 def _dogrudan_link(bilgi: dict) -> tuple[str | None, dict]:
@@ -341,7 +358,7 @@ async def bilgi(
 
     async with _cozumleme_kilidi:
         try:
-            veri = await asyncio.to_thread(_bilgi_cek, url)
+            veri, jar = await asyncio.to_thread(_bilgi_cek, url)
         except (DownloadError, ExtractorError) as hata:
             _hata_firlat(url, hata, bool(debug))
         except Exception as hata:
@@ -371,7 +388,7 @@ async def indir(
 
     async with _cozumleme_kilidi:
         try:
-            veri = await asyncio.to_thread(_bilgi_cek, url)
+            veri, jar = await asyncio.to_thread(_bilgi_cek, url)
         except (DownloadError, ExtractorError) as hata:
             _hata_firlat(url, hata, bool(debug))
         except Exception as hata:
@@ -386,7 +403,16 @@ async def indir(
     link, ust_headerlar = _dogrudan_link(veri)
 
     if link:
-        return await _proxy_stream(link, ust_headerlar, ad)
+        cerez = _cookie_basligi(jar, link)
+        if cerez:
+            ust_headerlar.setdefault("Cookie", cerez)
+        ust_headerlar.setdefault("Referer", veri.get("webpage_url") or url)
+        cevap = await _proxy_stream(link, ust_headerlar, ad)
+        if cevap is not None:
+            return cevap
+        # CDN dogrudan istegi reddetti -> yt-dlp kendi indirsin.
+        # Yavas ama yt-dlp curl_cffi ile TLS taklidi yapabildigi icin gecer.
+        log.info("[YEDEK YOL] yt-dlp ile indiriliyor: %s", url)
 
     klasor = tempfile.mkdtemp(prefix="ss_")
     try:
@@ -404,7 +430,7 @@ async def indir(
     )
 
 
-async def _proxy_stream(link: str, ust_headerlar: dict, ad: str) -> StreamingResponse:
+async def _proxy_stream(link: str, ust_headerlar: dict, ad: str) -> StreamingResponse | None:
     ust_headerlar.setdefault("User-Agent", USER_AGENT)
     # httpx varsayilan gzip ister ve acar; o zaman Content-Length yanlis olur
     ust_headerlar["Accept-Encoding"] = "identity"
@@ -423,15 +449,15 @@ async def _proxy_stream(link: str, ust_headerlar: dict, ad: str) -> StreamingRes
         yanit = await istemci.send(istek, stream=True)
     except Exception as hata:
         await istemci.aclose()
-        log.warning("[CDN HATASI] %s", hata)
-        raise HTTPException(502, "Video sunucusuna ulasilamadi")
+        log.warning("[CDN ULASILAMADI] %s", hata)
+        return None  # cagiran taraf yedek yola dusecek
 
     if yanit.status_code >= 400:
         kod = yanit.status_code
         await yanit.aclose()
         await istemci.aclose()
-        log.warning("[CDN %s] link eskimis olabilir", kod)
-        raise HTTPException(502, f"Video sunucusu {kod} dondu, tekrar dene")
+        log.warning("[CDN %s] stream reddedildi, yt-dlp yoluna dusuluyor", kod)
+        return None
 
     async def govde():
         try:
