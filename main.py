@@ -16,6 +16,8 @@ Endpointler:
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import os
 import re
 import secrets
@@ -84,6 +86,21 @@ DEBUG_ACIK = os.getenv("DEBUG_ACIK", "1").strip() == "1"
 # Bos birakilirsa anahtar kontrolu yapilmaz. Dolduruldugunda istekler
 # X-API-Key basligi tasimak zorunda. Mutlak koruma degil, esik yukseltir.
 API_ANAHTARI = os.getenv("API_ANAHTARI", "").strip()
+
+# --- KENDINI UYANIK TUTMA ---
+# Render ucretsiz plan 15 dk sessizlikten sonra servisi uyutuyor ve
+# uyanmasi ~50 sn suruyor. Asagidaki gorev servisin kendi public
+# adresine duzenli istek atarak uykuyu engeller.
+# DIKKAT: uyanik gecen her saat 750 saatlik aylik kotadan duser.
+# 7/24 acik = ~744 saat (kota 750). O yuzden varsayilan olarak sadece
+# aktif saatlerde calisir.
+KENDINI_UYANIK_TUT = os.getenv("KENDINI_UYANIK_TUT", "0").strip() == "1"
+PING_ARALIGI = int(os.getenv("PING_ARALIGI_SN", "600"))  # 10 dakika
+UYANIK_BASLANGIC = int(os.getenv("UYANIK_BASLANGIC", "7"))   # yerel saat
+UYANIK_BITIS = int(os.getenv("UYANIK_BITIS", "1"))           # ertesi gun 01:00
+SAAT_FARKI = int(os.getenv("SAAT_FARKI", "3"))               # UTC+3 (Turkiye)
+# Render bu degiskeni otomatik saglar: https://<servis>.onrender.com
+KENDI_ADRESIM = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
 YT_PLAYER_CLIENT = os.getenv("YT_PLAYER_CLIENT", "").strip()
 IMPERSONATE = os.getenv("IMPERSONATE", "").strip()  # ornek: chrome / safari
 # Varsayilan: en yuksek cozunurluk. Videolar telefonda acilmazsa
@@ -100,7 +117,52 @@ IZINLI_HOSTLAR = set(TEMEL_HOSTLAR)
 if YOUTUBE_ACIK:
     IZINLI_HOSTLAR |= YOUTUBE_HOSTLARI
 
-app = FastAPI(title="Social Saver API", version=SURUM)
+def _aktif_saatte_mi() -> bool:
+    """Yerel saate gore uyanik penceresinde miyiz?"""
+    saat = (datetime.now(timezone.utc).hour + SAAT_FARKI) % 24
+    if UYANIK_BASLANGIC == UYANIK_BITIS:
+        return True  # 7/24
+    if UYANIK_BASLANGIC < UYANIK_BITIS:
+        return UYANIK_BASLANGIC <= saat < UYANIK_BITIS
+    # Gece yarisini asan pencere (ornek: 07 -> 01)
+    return saat >= UYANIK_BASLANGIC or saat < UYANIK_BITIS
+
+
+async def _kendini_uyandir_dongusu():
+    """Kendi public adresine duzenli istek atar.
+
+    Istek Render'in yuk dengeleyicisi uzerinden geri geldigi icin
+    'gelen trafik' sayilir ve spin-down sayaci sifirlanir.
+    """
+    if not KENDI_ADRESIM:
+        log.warning("[PING] RENDER_EXTERNAL_URL bos, kendini uyandirma kapali")
+        return
+
+    hedef = f"{KENDI_ADRESIM}/saglik"
+    log.info("[PING] Kendini uyanik tutma aktif: %s (her %s sn)", hedef, PING_ARALIGI)
+
+    async with httpx.AsyncClient(timeout=30.0) as istemci:
+        while True:
+            await asyncio.sleep(PING_ARALIGI)
+            if not _aktif_saatte_mi():
+                continue
+            try:
+                await istemci.get(hedef)
+            except Exception as hata:
+                log.warning("[PING] basarisiz: %s", hata)
+
+
+@asynccontextmanager
+async def yasam_dongusu(app: FastAPI):
+    gorev = None
+    if KENDINI_UYANIK_TUT:
+        gorev = asyncio.create_task(_kendini_uyandir_dongusu())
+    yield
+    if gorev:
+        gorev.cancel()
+
+
+app = FastAPI(title="Social Saver API", version=SURUM, lifespan=yasam_dongusu)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"]
 )
@@ -357,6 +419,8 @@ async def saglik():
         "cookie_var": bool(COOKIE_DOSYASI and os.path.exists(COOKIE_DOSYASI)),
         "cookie_yolu": COOKIE_DOSYASI or None,
         "anahtar_zorunlu": bool(API_ANAHTARI),
+        "kendini_uyanik_tutma": KENDINI_UYANIK_TUT,
+        "su_an_aktif_saatte": _aktif_saatte_mi(),
     }
 
 
