@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import time
@@ -80,6 +81,9 @@ YOUTUBE_ACIK = os.getenv("YOUTUBE_ACIK", "0").strip() == "1"
 PROXY = os.getenv("PROXY", "").strip()
 COOKIE_DOSYASI = os.getenv("COOKIE_DOSYASI", "").strip()
 DEBUG_ACIK = os.getenv("DEBUG_ACIK", "1").strip() == "1"
+# Bos birakilirsa anahtar kontrolu yapilmaz. Dolduruldugunda istekler
+# X-API-Key basligi tasimak zorunda. Mutlak koruma degil, esik yukseltir.
+API_ANAHTARI = os.getenv("API_ANAHTARI", "").strip()
 YT_PLAYER_CLIENT = os.getenv("YT_PLAYER_CLIENT", "").strip()
 IMPERSONATE = os.getenv("IMPERSONATE", "").strip()  # ornek: chrome / safari
 # Varsayilan: en yuksek cozunurluk. Videolar telefonda acilmazsa
@@ -135,6 +139,14 @@ def _url_dogrula(url: str) -> None:
 
     if host not in IZINLI_HOSTLAR:
         raise HTTPException(403, f"Bu site desteklenmiyor: {host}")
+
+
+def _anahtar_kontrol(request: Request) -> None:
+    if not API_ANAHTARI:
+        return
+    gelen = request.headers.get("x-api-key", "")
+    if not secrets.compare_digest(gelen, API_ANAHTARI):
+        raise HTTPException(401, "Gecersiz anahtar")
 
 
 def _limit_kontrol(request: Request) -> None:
@@ -344,6 +356,7 @@ async def saglik():
         "proxy_var": bool(PROXY),
         "cookie_var": bool(COOKIE_DOSYASI and os.path.exists(COOKIE_DOSYASI)),
         "cookie_yolu": COOKIE_DOSYASI or None,
+        "anahtar_zorunlu": bool(API_ANAHTARI),
     }
 
 
@@ -353,6 +366,7 @@ async def bilgi(
     url: str = Query(..., min_length=8),
     debug: int = Query(0),
 ):
+    _anahtar_kontrol(request)
     _url_dogrula(url)
     _limit_kontrol(request)
 
@@ -383,6 +397,7 @@ async def indir(
     url: str = Query(..., min_length=8),
     debug: int = Query(0),
 ):
+    _anahtar_kontrol(request)
     _url_dogrula(url)
     _limit_kontrol(request)
 
