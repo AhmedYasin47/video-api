@@ -108,7 +108,7 @@ IMPERSONATE = os.getenv("IMPERSONATE", "").strip()  # ornek: chrome / safari
 SADECE_H264 = os.getenv("SADECE_H264", "0").strip() == "1"
 
 MAKS_BOYUT = int(os.getenv("MAKS_BOYUT_MB", "300")) * 1024 * 1024
-DAKIKA_LIMITI = int(os.getenv("DAKIKA_LIMITI", "12"))
+DAKIKA_LIMITI = int(os.getenv("DAKIKA_LIMITI", "25"))
 ES_ZAMANLI_LIMIT = int(os.getenv("ES_ZAMANLI", "3"))
 
 FORMAT_SECIMI = FORMAT_UYUMLU if SADECE_H264 else FORMAT_KALITELI
@@ -234,8 +234,10 @@ def _ydl_ayarlari(ekstra: dict | None = None) -> dict:
         "noplaylist": True,
         "nocheckcertificate": True,
         "ignoreconfig": True,
-        "socket_timeout": 20,
-        "retries": 2,
+        "socket_timeout": 45,
+        "retries": 4,
+        "extractor_retries": 3,
+        "fragment_retries": 4,
         "format": FORMAT_SECIMI,
         # IPv6 araliklari daha sik engelleniyor, IPv4'e zorla
         "source_address": "0.0.0.0",
@@ -465,6 +467,7 @@ async def indir(
     _url_dogrula(url)
     _limit_kontrol(request)
 
+    baslangic = time.monotonic()
     async with _cozumleme_kilidi:
         try:
             veri, jar = await asyncio.to_thread(_bilgi_cek, url)
@@ -473,6 +476,7 @@ async def indir(
         except Exception as hata:
             log.exception("[SUNUCU HATASI] url=%s", url)
             raise HTTPException(500, f"Sunucu hatasi: {type(hata).__name__}")
+    log.info("[SURE] cozumleme %.1f sn | %s", time.monotonic() - baslangic, url[:80])
 
     boyut = _tahmini_boyut(veri)
     if boyut and boyut > MAKS_BOYUT:
