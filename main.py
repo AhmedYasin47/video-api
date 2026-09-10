@@ -457,6 +457,68 @@ async def bilgi(
     }
 
 
+@app.get("/link")
+async def dogrudan_link(
+    request: Request,
+    url: str = Query(..., min_length=8),
+    debug: int = Query(0),
+):
+    """Videoyu TASIMADAN sadece gercek CDN adresini ve gerekli basliklari doner.
+
+    Telefon videoyu dogrudan CDN'den ceker; boylece bu sunucunun bant
+    genisligi kotasindan sadece birkac KB dusser, videonun tamami degil.
+    HLS/DASH gibi tek parcali indirilemeyen durumlarda dogrudan=false doner
+    ve uygulama /indir yoluna geri duser.
+    """
+    _anahtar_kontrol(request)
+    _url_dogrula(url)
+    _limit_kontrol(request)
+
+    baslangic = time.monotonic()
+    async with _cozumleme_kilidi:
+        try:
+            veri, jar = await asyncio.to_thread(_bilgi_cek, url)
+        except (DownloadError, ExtractorError) as hata:
+            _hata_firlat(url, hata, bool(debug))
+        except Exception as hata:
+            log.exception("[SUNUCU HATASI] url=%s", url)
+            raise HTTPException(500, f"Sunucu hatasi: {type(hata).__name__}")
+    log.info("[SURE] link %.1f sn | %s", time.monotonic() - baslangic, url[:80])
+
+    link, ust_headerlar = _dogrudan_link(veri)
+
+    if not link:
+        return {
+            "basarili": True,
+            "dogrudan": False,
+            "sebep": "Tek parcali mp4 yok (HLS/DASH)",
+            "baslik": veri.get("title"),
+        }
+
+    boyut = _tahmini_boyut(veri)
+    if boyut and boyut > MAKS_BOYUT:
+        raise HTTPException(413, f"Video cok buyuk ({boyut // 1048576} MB)")
+
+    # CDN'in istedigi basliklar: challenge cookie'si, referer, user-agent
+    cerez = _cookie_basligi(jar, link)
+    if cerez:
+        ust_headerlar.setdefault("Cookie", cerez)
+    ust_headerlar.setdefault("Referer", veri.get("webpage_url") or url)
+    ust_headerlar.setdefault("User-Agent", USER_AGENT)
+    # Telefon tarafinda ilerleme cubugunun calismasi icin sikistirma kapali
+    ust_headerlar["Accept-Encoding"] = "identity"
+
+    return {
+        "basarili": True,
+        "dogrudan": True,
+        "link": link,
+        "headers": ust_headerlar,
+        "boyut": boyut,
+        "baslik": veri.get("title"),
+        "dosya_adi": _dosya_adi(veri),
+    }
+
+
 @app.get("/indir")
 async def indir(
     request: Request,
